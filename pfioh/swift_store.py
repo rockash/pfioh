@@ -12,6 +12,10 @@ from   pfioh                       import base64_process, zip_process, zipdir
 from   keystoneauth1.identity      import v3
 from   keystoneauth1               import session
 from   swiftclient                 import client as swift_client
+import pprint
+
+pp = pprint.PrettyPrinter(indent=4)
+
 try:
     from ._colors import Colors
 except:
@@ -67,8 +71,8 @@ class SwiftStore(StoreHandler):
         str_osProjectName       = config['PROJECT']['osProjectName']
         
         scopedSession        = self._getScopedSession(str_osAuthUrl, str_username, str_password, str_osProjectDomain, str_osProjectName)
-        self.swiftConnection = swift_client.Connection(session=scopedSession)
-            
+        swiftConnection = swift_client.Connection(session=scopedSession)
+        return swiftConnection    
 
     def _putContainer(self, str_key):
         """
@@ -84,28 +88,35 @@ class SwiftStore(StoreHandler):
         Creates an object with the given key and value and puts the object in the specified container
         """
 
-        self.swiftConnection.put_object(str_containerName, str_key , contents=str_value, content_type='text/plain')
+        self.swiftConnection.put_object(str_containerName, str_key , contents=str_value.read(), content_type='text/plain')
         self.qprint('Object added into Swift container: %s' %str_containerName)
 
 
-    def _getObject(self, str_key, b_delete):
+    def _downloadObject(self, str_key, b_delete):
         """
-        Returns an object associated with the specified key in the specified container
+        Downloads the specified key in the specified container
         Deletes the object after returning if specified
         """
-
-        str_containerName = str_key
-        str_key = os.path.join('output','data')
-        swiftDataObject = self.swiftConnection.get_object(str_containerName, str_key)
-        if b_delete:
-            self.swiftConnection.delete_object(str_containerName, str_key)
-            self.qprint('Deleted object with key %s' %str_key)
-        return swiftDataObject
+        try:
+            str_containerName = str_key
+            str_key = os.path.join('output','data')
+            downloadResultsGenerator = self.swiftConnection.download(str_containerName, [str_key], {'out_file': '/tmp/incomingData.zip'})
+            if b_delete:
+                self.swiftConnection.delete_object(str_containerName, str_key)
+                print('Deleted object with key %s' %str_key)
+            downloadResults = next(downloadResultsGenerator)
+            if downloadResults["success"]:
+                print("Download successful")
+            else:
+                print("Download unsuccessful")
+                pp.pprint(downloadResults)
+        except Exception as exp:
+            print(exp)
 
 
     def zipUpContent(self, str_fileContent, str_clientFile):
         """
-        Zips up the file content byte stream, reads from archive and returs zipped content
+        Zips up the file content byte stream, reads from archive and returns zipped content
         """
 
         str_fileName = str_clientFile.split('/')[-1]
@@ -113,11 +124,9 @@ class SwiftStore(StoreHandler):
         zipfileObj = zipfile.ZipFile('ziparchive.zip', 'w' ,compression= zipfile.ZIP_DEFLATED)
         zipfileObj.writestr(str_fileName,str_fileContent)
 
-        with open('ziparchive.zip','rb') as f:
-            zippedFileContent = f.read()
-            os.remove('ziparchive.zip')
+        f = open('ziparchive.zip','rb')
 
-        return zippedFileContent
+        return f
 
 
     def storeData(self, **kwargs):
@@ -141,17 +150,20 @@ class SwiftStore(StoreHandler):
             return d_ret
 
         if not b_zip:
-            str_fileContent = self.zipUpContent(str_fileContent, str_clientFile)
+            str_fileContent_handler = self.zipUpContent(str_fileContent, str_clientFile)
 
         try:
             str_containerName = str_key
             str_key           = os.path.join('input','data')
-            self._putObject(str_containerName, str_key, str_fileContent)
+            self._putObject(str_containerName, str_key, str_fileContent_handler)
         except Exception as err:
             self.qprint(err)
             d_ret['msg']    = 'File/Directory not stored in Swift'
             d_ret['status'] = False
             return d_ret
+        finally:
+            os.remove('ziparchive.zip')
+
 
         #Headers 
         d_ret['status'] = True
@@ -174,13 +186,14 @@ class SwiftStore(StoreHandler):
 
         try:
             self._initiateSwiftConnection()
-            dataObject = self._getObject(str_key, False)
+            self._downloadObject(str_key, False)
         except Exception as err:
             self.qprint(err)
             d_ret['status'] = False
             d_ret['msg']    = 'Retrieving File/Directory from Swift failed'
             return d_ret
 
+        # [TODO Ashwin] replace with zip file read
         str_objectInformation= dataObject[0]
         str_fileContent= dataObject[1]
         
@@ -189,7 +202,7 @@ class SwiftStore(StoreHandler):
             raise NotImplementedError('Please use the zip option')
 
         #Encoding
-        if str_encoding=='base64':
+        if str_encoding =='base64':
             try:
                 str_fileContent         = base64.b64encode(str_fileContent)
                 self.qprint('Base64 encoding successful')
@@ -225,11 +238,13 @@ class SwiftStore(StoreHandler):
         return d_ret
 
 
-    def writeData(self, str_fileContent):
+    def writeData(self, str_filePath):
         """
         Writes the file content into a wfile object for transferring over the network
         """
         self.send_response(200)
         # self.send_header('Content-type', 'text/json')
         self.end_headers()
-        self.wfile.write(str_fileContent)
+        with open(str_filePath, 'rb') as fh:
+                for chunk in iter(lambda: fh.read(4096), b''):
+                    self.wfile.write(chunk)

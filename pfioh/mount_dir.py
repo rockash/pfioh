@@ -156,7 +156,7 @@ class MountDir(StoreHandler):
         """
 
         with open(str_fileToProcess, 'rb') as fh:
-            filesize    = os.stat(str_fileToProcess).st_size
+            filesize    = self.getSize(str_fileToProcess)
             self.dp.qprint("Transmitting " + Colors.YELLOW + "{:,}".format(filesize) + Colors.PURPLE +
                         " target bytes from " + Colors.YELLOW + 
                         "%s" % (str_fileToProcess) + Colors.PURPLE + '...', comms = 'status')
@@ -173,8 +173,8 @@ class MountDir(StoreHandler):
             d_ret['transmit']['filesize']   = '%s' % os.stat(str_fileToProcess).st_size
             d_ret['status']                 = True
             d_ret['msg']                    = d_ret['transmit']['msg']
-            self.wfile.write(fh.read())
-
+            for chunk in iter(lambda: fh.read(4096), b''):
+                self.wfile.write(chunk)
         return d_ret
 
     def getSize(self, str_fileToProcess):

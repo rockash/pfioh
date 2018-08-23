@@ -1245,11 +1245,9 @@ def base64_process(**kwargs):
     if str_action       == "encode":
         # Encode the contents of the file at targetPath as ASCII for transmission
         if len(str_fileToRead):
-            with open(str_fileToRead, 'rb') as f:
-                data            = f.read()
-                f.close()
-        data_b64            = base64.b64encode(data)
-        with open(str_fileToSave, 'wb') as f:
+            f = open(str_fileToRead, 'rb')
+            data_b64 = base64.b64encode(f.read())
+            f = open(str_fileToSave, 'wb')
             f.write(data_b64)
             f.close()
         return {
